@@ -1,0 +1,25 @@
+{
+  "name": "ea-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Enterprise Architect MS SQL",
+  "type": "module",
+  "main": "server.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node server.ts",
+    "dev": "ts-node server.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mssql": "^11.0.1"
+  },
+  "devDependencies": {
+    "@types/mssql": "^9.1.5",
+    "@types/node": "^20.12.7",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

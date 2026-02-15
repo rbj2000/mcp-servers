@@ -1,0 +1,201 @@
+1. Cieľ projektu
+Vytvoriť Model Context Protocol (MCP) server v prostredí Node.js, ktorý umožní LLM (napr. Claude) čítať špecifikácie, procesy a Use Case-y priamo z MS SQL databázy Enterprise Architecta.
+
+Cieľom je umožniť AI generovať testovacie scenáre (Gherkin/Cucumber) na základe aktuálnej dokumentácie uloženej v EA, bez nutnosti použitia proprietárneho EA API.
+
+2. Technický Stack
+Runtime: Node.js (v20+)
+
+Jazyk: TypeScript (odporúčané) alebo JavaScript
+
+Knižnice:
+
+@modelcontextprotocol/sdk (Oficiálne SDK pre vytvorenie servera)
+
+mssql (Microsoft SQL Server driver pre Node.js)
+
+dotenv (Pre správu premenných prostredia)
+
+Komunikácia: Stdio (štandardný vstup/výstup pre lokálne spustenie cez Claude Desktop)
+
+3. Konfigurácia Databázy
+Aplikácia sa bude pripájať priamo na MS SQL Server (Read-Only).
+
+Connection parametre (uložiť do .env):
+
+Host: YOUR_DB_HOST
+
+Database: YOUR_DB_NAME
+
+User: YOUR_DB_USER
+
+Password: (Bude dodané bezpečne)
+
+Driver Options: encrypt: false (alebo trustServerCertificate: true ak je to potrebné pre internú sieť), Instancename (ak je potrebné, inak default port 1433).
+
+4. Funkčné požiadavky (MCP Tools)
+Server musí exponovať minimálne dva nástroje (Tools), ktoré bude LLM volať:
+
+Tool A: search_ea_elements
+Vyhľadá relevantné elementy v modeli podľa názvu.
+
+Vstup (Arguments):
+
+keyword (string): Časť názvu Use Case-u, aktivity alebo požiadavky.
+
+Logika:
+
+Vykonať SELECT nad tabuľkou t_object.
+
+Filtrovať stĺpec Object_Type na hodnoty: 'UseCase', 'Activity', 'Requirement', 'Feature', 'Component'.
+
+Filtrovať Name pomocou LIKE %keyword%.
+
+Výstup:
+
+JSON zoznam obsahujúci: Object_ID, Name, Object_Type, Author.
+
+Tool B: get_element_details
+Vráti detailnú špecifikáciu pre konkrétny element, vrátane textového popisu a krokov scenára.
+
+Vstup (Arguments):
+
+object_id (number/integer): ID elementu získané z predchádzajúceho hľadania.
+
+Logika:
+
+Načítať základné info z t_object (stĺpce Name, Note, Object_Type).
+
+Načítať scenáre z t_objectscenarios kde Object_ID sa zhoduje.
+
+Kritické: Stĺpec XMLContent v tabuľke t_objectscenarios obsahuje kroky scenára vo formáte XML.
+
+Výstup:
+
+Textový alebo JSON formát obsahujúci:
+
+Popis (Note) - poznámka: môže obsahovať HTML tagy, nečistiť, LLM to zvládne.
+
+Zoznam scenárov (Názov scenára + XML obsah krokov).
+
+5. Implementačné detaily (SQL Query Map)
+Developer nemusí skúmať EA schému, použije tieto pripravené query:
+
+Query pre search_ea_elements:
+
+SQL
+
+SELECT TOP 20 Object_ID, Name, Object_Type, Author, Note
+FROM t_object
+WHERE Name LIKE @keyword
+AND Object_Type IN ('UseCase', 'Activity', 'Requirement', 'Feature')
+Query pre get_element_details (Scenáre):
+
+SQL
+
+SELECT Scenario, Notes, XMLContent
+FROM t_objectscenarios
+WHERE Object_ID = @objectId
+6. Ukážka kódu (Boilerplate pre Developera)
+Tu je základná štruktúra pre src/index.ts:
+
+TypeScript
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import sql from "mssql";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+// Konfigurácia DB
+const sqlConfig = {
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  server: process.env.DB_SERVER,
+  pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+  options: {
+    encrypt: false, // Pre lokálne siete často nutné nastaviť na false
+    trustServerCertificate: true
+  }
+};
+
+const server = new Server(
+  { name: "ea-reader", version: "1.0.0" },
+  { capabilities: { tools: {} } }
+);
+
+// Definícia nástrojov
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return {
+    tools: [
+      {
+        name: "search_ea_elements",
+        description: "Hľadá Use Cases alebo Procesy v Enterprise Architect podľa názvu",
+        inputSchema: {
+          type: "object",
+          properties: {
+            keyword: { type: "string", description: "Hľadaný výraz (napr. 'Prihlásenie')" }
+          },
+          required: ["keyword"]
+        }
+      },
+      {
+        name: "get_element_details",
+        description: "Vráti detail špecifikácie a kroky scenárov pre dané ID",
+        inputSchema: {
+          type: "object",
+          properties: {
+            object_id: { type: "number", description: "ID elementu z vyhľadávania" }
+          },
+          required: ["object_id"]
+        }
+      }
+    ]
+  };
+});
+
+// Implementácia logiky
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  try {
+    await sql.connect(sqlConfig);
+    
+    if (request.params.name === "search_ea_elements") {
+      const { keyword } = request.params.arguments as { keyword: string };
+      const result = await sql.query`SELECT TOP 20 Object_ID, Name, Object_Type FROM t_object WHERE Name LIKE ${'%'+keyword+'%'} AND Object_Type IN ('UseCase', 'Activity')`;
+      return { content: [{ type: "text", text: JSON.stringify(result.recordset) }] };
+    }
+
+    if (request.params.name === "get_element_details") {
+      const { object_id } = request.params.arguments as { object_id: number };
+      
+      // 1. Získať Note
+      const objResult = await sql.query`SELECT Name, Note FROM t_object WHERE Object_ID = ${object_id}`;
+      
+      // 2. Získať Scenáre (XML)
+      const scenResult = await sql.query`SELECT Scenario, XMLContent FROM t_objectscenarios WHERE Object_ID = ${object_id}`;
+      
+      const response = {
+        element: objResult.recordset[0],
+        scenarios: scenResult.recordset
+      };
+
+      return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+    }
+
+    throw new Error("Neznámy tool");
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+  }
+});
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+7. Akceptačné kritériá
+Server sa úspešne pripojí k DB ZVJS na IP YOUR_DB_HOST.
+
+Server je možné spustiť cez npx alebo nakonfigurovať do Claude Desktop App.
+
+Pri zadaní promptu "Nájdi špecifikáciu pre prihlásenie a vypíš testovacie kroky" LLM správne identifikuje Use Case a vypíše kroky, ktoré sú v DB uložené ako XML.
