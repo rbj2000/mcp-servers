@@ -153,9 +153,9 @@ async function getWorkItemFull(workItemId) {
 /**
  * Search work items by WIQL query
  */
-async function searchWorkItems(query) {
+async function searchWorkItems(query, top = 200, skip = 0) {
   return await makeRequest(
-    `/${TFS_PROJECT}/_apis/wit/wiql?api-version=${TFS_API_VERSION}`,
+    `/${TFS_PROJECT}/_apis/wit/wiql?$top=${top}&$skip=${skip}&api-version=${TFS_API_VERSION}`,
     'POST',
     { query }
   );
@@ -233,6 +233,14 @@ async function handleRequest(request) {
                   query: {
                     type: 'string',
                     description: 'WIQL query (e.g., "SELECT [System.Id] FROM WorkItems WHERE [System.State] = \'Active\'")'
+                  },
+                  top: {
+                    type: 'integer',
+                    description: 'Max number of results to return (default 200). Use with skip for pagination.'
+                  },
+                  skip: {
+                    type: 'integer',
+                    description: 'Number of results to skip (default 0). Use with top for pagination.'
                   }
                 },
                 required: ['query']
@@ -268,7 +276,7 @@ async function handleRequest(request) {
           if (!toolArgs.query) {
             result = { error: 'Missing required parameter: query' };
           } else {
-            result = await searchWorkItems(toolArgs.query);
+            result = await searchWorkItems(toolArgs.query, toolArgs.top, toolArgs.skip);
           }
           break;
 

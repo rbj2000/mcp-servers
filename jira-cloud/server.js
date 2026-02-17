@@ -135,12 +135,13 @@ function toADF(text) {
 
 // --- JIRA Tools Implementation ---
 
-async function jiraSearch(jql, maxResults = 50) {
+async function jiraSearch(jql, maxResults = 50, startAt = 0) {
   // Jira Cloud V3 requires POST to /rest/api/3/search/jql for JQL searches
   // NOTE: The endpoint is /rest/api/3/search/jql, and the body contains the JQL.
   return await makeRequest('/rest/api/3/search/jql', 'POST', {
     jql,
     maxResults,
+    startAt,
     fields: ['summary', 'status', 'assignee', 'priority', 'issuetype', 'created', 'updated', 'project']
   });
 }
@@ -303,7 +304,8 @@ async function handleRequest(request) {
                 type: 'object',
                 properties: {
                   jql: { type: 'string', description: 'JQL query string' },
-                  maxResults: { type: 'integer', description: 'Max results to return (default 50)' }
+                  maxResults: { type: 'integer', description: 'Max results to return (default 50)' },
+                  startAt: { type: 'integer', description: 'Index of the first result to return (0-based, default 0). Use with maxResults for pagination.' }
                 },
                 required: ['jql']
               }
@@ -436,7 +438,7 @@ async function handleRequest(request) {
           result = await jiraGetProjectIssueTypes(args.projectIdOrKey);
           break;
         case 'jira_search':
-          result = await jiraSearch(args.jql, args.maxResults);
+          result = await jiraSearch(args.jql, args.maxResults, args.startAt);
           break;
         case 'jira_get_issue':
           result = await jiraGetIssue(args.issueIdOrKey);
