@@ -77,7 +77,9 @@ async function handleRequest(request: any) {
                                 inputSchema: {
                                     type: "object",
                                     properties: {
-                                        keyword: { type: "string", description: "Hľadaný výraz (napr. 'Prihlásenie')" }
+                                        keyword: { type: "string", description: "Hľadaný výraz (napr. 'Prihlásenie')" },
+                                        maxResults: { type: "integer", description: "Max results to return (default 20)" },
+                                        offset: { type: "integer", description: "Number of results to skip (default 0). Use with maxResults for pagination." }
                                     },
                                     required: ["keyword"]
                                 }
@@ -108,7 +110,9 @@ async function handleRequest(request: any) {
                                 inputSchema: {
                                     type: "object",
                                     properties: {
-                                        keyword: { type: "string", description: "Hľadaný výraz" }
+                                        keyword: { type: "string", description: "Hľadaný výraz" },
+                                        maxResults: { type: "integer", description: "Max results to return (default 20)" },
+                                        offset: { type: "integer", description: "Number of results to skip (default 0). Use with maxResults for pagination." }
                                     },
                                     required: ["keyword"]
                                 }
@@ -205,20 +209,40 @@ async function handleRequest(request: any) {
                 }
                 else if (toolName === "search_ea_elements") {
                     const { keyword } = params.arguments as { keyword: string };
+                    const maxResults = args.maxResults || 20;
+                    const offset = args.offset || 0;
 
-                    // Build query dynamically - PARAMETERIZED
-                    const sqlReq = new sql.Request();
-                    sqlReq.input('keyword', sql.NVarChar, `%${keyword}%`);
-                    const filter = addPackageFilter(sqlReq, "t_object");
-                    const finalQuery = `
-                SELECT TOP 20 Object_ID, Name, Object_Type, Author, Note
+                    const whereBase = `WHERE Name LIKE @keyword
+                AND Object_Type IN ('UseCase', 'Activity', 'Requirement', 'Feature', 'Component')`;
+
+                    // Count query
+                    const countReq = new sql.Request();
+                    countReq.input('keyword', sql.NVarChar, `%${keyword}%`);
+                    const countFilter = addPackageFilter(countReq, "t_object");
+                    const countResult = await countReq.query(
+                        `SELECT COUNT(*) as total FROM t_object ${whereBase} ${countFilter}`
+                    );
+
+                    // Data query with pagination
+                    const dataReq = new sql.Request();
+                    dataReq.input('keyword', sql.NVarChar, `%${keyword}%`);
+                    dataReq.input('offset', sql.Int, offset);
+                    dataReq.input('maxResults', sql.Int, maxResults);
+                    const dataFilter = addPackageFilter(dataReq, "t_object");
+                    const dataResult = await dataReq.query(`
+                SELECT Object_ID, Name, Object_Type, Author, Note
                 FROM t_object
-                WHERE Name LIKE @keyword
-                AND Object_Type IN ('UseCase', 'Activity', 'Requirement', 'Feature', 'Component')
-                ${filter}
-            `;
-                    const resultQuery = await sqlReq.query(finalQuery);
-                    result = resultQuery.recordset;
+                ${whereBase}
+                ${dataFilter}
+                ORDER BY Name
+                OFFSET @offset ROWS FETCH NEXT @maxResults ROWS ONLY
+            `);
+                    result = {
+                        total: countResult.recordset[0].total,
+                        offset,
+                        maxResults,
+                        items: dataResult.recordset
+                    };
                 }
 
                 else if (toolName === "get_element_details") {
@@ -237,17 +261,39 @@ async function handleRequest(request: any) {
                 }
                 else if (toolName === "search_diagrams") {
                     const keyword = args.keyword;
-                    const sqlReq = new sql.Request();
-                    sqlReq.input('keyword', sql.NVarChar, `%${keyword}%`);
-                    const filter = addPackageFilter(sqlReq, "t_diagram");
-                    const finalQuery = `
-                        SELECT TOP 20 Diagram_ID, Name, Diagram_Type
+                    const maxResults = args.maxResults || 20;
+                    const offset = args.offset || 0;
+
+                    const whereBase = `WHERE Name LIKE @keyword`;
+
+                    // Count query
+                    const countReq = new sql.Request();
+                    countReq.input('keyword', sql.NVarChar, `%${keyword}%`);
+                    const countFilter = addPackageFilter(countReq, "t_diagram");
+                    const countResult = await countReq.query(
+                        `SELECT COUNT(*) as total FROM t_diagram ${whereBase} ${countFilter}`
+                    );
+
+                    // Data query with pagination
+                    const dataReq = new sql.Request();
+                    dataReq.input('keyword', sql.NVarChar, `%${keyword}%`);
+                    dataReq.input('offset', sql.Int, offset);
+                    dataReq.input('maxResults', sql.Int, maxResults);
+                    const dataFilter = addPackageFilter(dataReq, "t_diagram");
+                    const dataResult = await dataReq.query(`
+                        SELECT Diagram_ID, Name, Diagram_Type
                         FROM t_diagram
-                        WHERE Name LIKE @keyword
-                        ${filter}
-                    `;
-                    const queryResult = await sqlReq.query(finalQuery);
-                    result = queryResult.recordset;
+                        ${whereBase}
+                        ${dataFilter}
+                        ORDER BY Name
+                        OFFSET @offset ROWS FETCH NEXT @maxResults ROWS ONLY
+                    `);
+                    result = {
+                        total: countResult.recordset[0].total,
+                        offset,
+                        maxResults,
+                        items: dataResult.recordset
+                    };
                 }
                 else if (toolName === "get_diagram_as_mermaid") {
                     const diagram_id = args.diagram_id;
