@@ -113,11 +113,12 @@ function makeRequest(path, method = 'GET', body = null) {
 
 // --- JIRA Tools Implementation ---
 
-async function jiraSearch(jql, maxResults = 50) {
+async function jiraSearch(jql, maxResults = 50, startAt = 0) {
   // Use POST for search to handle long JQL queries
   return await makeRequest('/rest/api/2/search', 'POST', {
     jql,
     maxResults,
+    startAt,
     fields: ['summary', 'status', 'assignee', 'priority', 'issuetype', 'created', 'updated', 'project']
   });
 }
@@ -242,7 +243,8 @@ async function handleRequest(request) {
                 type: 'object',
                 properties: {
                   jql: { type: 'string', description: 'JQL query string' },
-                  maxResults: { type: 'integer', description: 'Max results to return (default 50)' }
+                  maxResults: { type: 'integer', description: 'Max results to return (default 50)' },
+                  startAt: { type: 'integer', description: 'Index of the first result to return (0-based, default 0). Use with maxResults for pagination.' }
                 },
                 required: ['jql']
               }
@@ -369,7 +371,7 @@ async function handleRequest(request) {
 
       switch (toolName) {
         case 'jira_search':
-          result = await jiraSearch(args.jql, args.maxResults);
+          result = await jiraSearch(args.jql, args.maxResults, args.startAt);
           break;
         case 'jira_get_issue':
           result = await jiraGetIssue(args.issueIdOrKey);
