@@ -41,7 +41,7 @@ Lightweight Node.js MCP server for Azure DevOps Server (TFS) on-premises. Zero d
 |------|-------------|
 | `tfs_get_work_item` | Get work item with full details including comments |
 | `tfs_get_comments` | Get comments/history for a work item |
-| `tfs_search_work_items` | Search work items using WIQL queries |
+| `tfs_search_work_items` | Search work items using WIQL queries (supports `top`/`skip` pagination) |
 
 **Environment variables:**
 - `TFS_URL` - TFS collection URL (e.g. `http://tfs.example.local:8080/tfs/your_collection`)
@@ -58,7 +58,7 @@ MCP server for Jira Server / Data Center using REST API v2. Zero dependencies.
 **Tools:**
 | Tool | Description |
 |------|-------------|
-| `jira_search` | Search issues using JQL |
+| `jira_search` | Search issues using JQL (supports `startAt`/`maxResults` pagination) |
 | `jira_get_issue` | Get full issue details |
 | `jira_create_issue` | Create a new issue |
 | `jira_update_issue` | Update issue fields |
@@ -97,9 +97,9 @@ TypeScript MCP server that reads UML models directly from Enterprise Architect's
 **Tools:**
 | Tool | Description |
 |------|-------------|
-| `search_ea_elements` | Search Use Cases, Activities, Requirements by name |
+| `search_ea_elements` | Search Use Cases, Activities, Requirements by name (supports `maxResults`/`offset` pagination) |
 | `get_element_details` | Get full specification with scenario steps (XML) |
-| `search_diagrams` | Search for diagrams by name |
+| `search_diagrams` | Search for diagrams by name (supports `maxResults`/`offset` pagination) |
 | `get_diagram_as_mermaid` | Generate Mermaid.js visualization of a diagram |
 | `get_element_relationships` | Get traceability, hierarchy, and dependencies |
 

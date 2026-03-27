@@ -1,13 +1,13 @@
 ---
 name: Azure DevOps / TFS MCP Server
-description: Azure DevOps Server / TFS integration for work item documentation and test scenario analysis
+description: Azure DevOps Server / TFS integration for work items, pull requests, documentation and test scenario analysis
 ---
 
 # Azure DevOps / TFS MCP Server Skill
 
 ## Overview
 
-This skill provides access to Azure DevOps Server and Team Foundation Server (TFS) on-premises installations through a Model Context Protocol (MCP) server. It enables you to retrieve work items, search using WIQL (Work Item Query Language), and access work item comments/history for documentation analysis and test scenario preparation.
+This skill provides access to Azure DevOps Server and Team Foundation Server (TFS) on-premises installations through a Model Context Protocol (MCP) server. It enables you to retrieve work items, search using WIQL (Work Item Query Language), access work item comments/history, and search/retrieve pull requests for documentation analysis and test scenario preparation.
 
 ## Configuration
 
@@ -195,6 +195,92 @@ Search for all user stories in Ready for Testing state:
 query: "SELECT [System.Id] FROM WorkItems WHERE [System.State] = 'Ready for Testing' AND [System.WorkItemType] = 'User Story'"
 ```
 
+### 4. tfs_search_pull_requests
+**Purpose**: Search pull requests across Azure DevOps repositories with various filters
+
+**Key Use Cases**:
+- Find all active pull requests in a project
+- Search PRs by creator, reviewer, or branch
+- Filter PRs by status (active, completed, abandoned)
+- Find PRs targeting a specific branch
+- Paginate through large result sets
+
+**Input Parameters**:
+- `status` (optional): PR status filter — `active`, `completed`, `abandoned`, `all` (default: `all`)
+- `creatorId` (optional): Filter by creator display name or unique name
+- `reviewerId` (optional): Filter by reviewer
+- `sourceRefName` (optional): Source branch filter (e.g. `refs/heads/feature/xyz`)
+- `targetRefName` (optional): Target branch filter (e.g. `refs/heads/main`)
+- `repositoryId` (optional): Filter to a specific repository name or ID
+- `top` (optional): Max results to return (default 50). Use with `skip` for pagination.
+- `skip` (optional): Number of results to skip (default 0). Use with `top` for pagination.
+
+**Returned Data**:
+- List of pull requests with id, title, status, creator, reviewers, source/target branches, creation date, repository info
+
+**Example Usage**:
+```
+Find all active pull requests targeting the main branch:
+  status: "active", targetRefName: "refs/heads/main"
+
+Find completed PRs from a specific repository:
+  status: "completed", repositoryId: "my-repo", top: 20
+```
+
+### 5. tfs_get_pull_request
+**Purpose**: Get full details of a specific pull request by its ID
+
+**Key Use Cases**:
+- Retrieve complete PR information including description, reviewers, and merge status
+- Review PR details for documentation or code review analysis
+- Check merge status and linked work items
+
+**Input Parameters**:
+- `pullRequestId` (required): Pull request ID (integer)
+
+**Returned Data**:
+- Full PR details including title, description, status, creator, reviewers, merge status, dates, linked work items, source/target branches, repository info
+
+**Example Usage**:
+```
+Get full details of pull request 4567
+```
+
+### 6. tfs_get_work_item_pull_requests
+**Purpose**: Get pull requests linked to a specific work item — the key tool for tracing tickets to code changes
+
+**Key Use Cases**:
+- Find all PRs associated with a ticket/work item
+- Trace code changes back to requirements
+- Review what code was changed to implement a user story or fix a bug
+- Verify that a work item has associated code changes
+
+**Input Parameters**:
+- `id` (required): Work item ID (integer)
+- `top` (optional): Max number of linked PRs to return (default 50). Use with `skip` for pagination.
+- `skip` (optional): Number of linked PRs to skip (default 0). Use with `top` for pagination.
+
+**Returned Data**:
+- `workItemId`: The queried work item ID
+- `totalCount`: Total number of linked PRs found
+- `count`: Number of PRs returned in this page
+- `skip`, `top`: Pagination parameters used
+- `pullRequests`: Array of full PR details for each linked pull request
+
+**Example Usage**:
+```
+Get all pull requests linked to work item 12345:
+  id: 12345
+
+Get the first 10 linked PRs:
+  id: 12345, top: 10, skip: 0
+```
+
+**Best Practices**:
+- Use this to understand what code changes were made for a requirement
+- Combine with `tfs_get_work_item` to get both the requirement details and the implementing PRs
+- Review PR descriptions for implementation context when preparing test scenarios
+
 ## Best Practices for Documentation Analysis
 
 ### 1. Requirements Traceability
@@ -322,8 +408,33 @@ Step-by-step approach:
 
 ### Full Documentation Analysis
 ```
-1. Search all User Stories: 
+1. Search all User Stories:
    "SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] = 'User Story'"
 2. Extract details for documentation
 3. Map to test scenarios based on acceptance criteria
+```
+
+### Tracing Work Items to Code Changes
+```
+1. Use tfs_get_work_item to get the requirement/bug details
+2. Use tfs_get_work_item_pull_requests to find all linked PRs
+3. Use tfs_get_pull_request for detailed PR info if needed
+4. Review PR descriptions to understand implementation approach
+```
+
+### Pull Request Review Workflow
+```
+1. Use tfs_search_pull_requests to find active PRs (status: "active")
+2. Use tfs_get_pull_request to review individual PR details
+3. Use tfs_get_work_item on linked work items to understand requirements
+4. Verify PRs cover acceptance criteria from the linked work items
+```
+
+### Code Change Impact Analysis
+```
+1. tfs_search_work_items - Find work items in a sprint/iteration
+2. For each work item:
+   a. tfs_get_work_item_pull_requests - Find linked PRs
+   b. Review PR details for scope of changes
+3. Identify areas affected by code changes for targeted testing
 ```

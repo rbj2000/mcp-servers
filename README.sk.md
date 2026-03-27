@@ -41,7 +41,7 @@ Lahky Node.js MCP server pre Azure DevOps Server (TFS) on-premises. Ziadne exter
 |---------|-------|
 | `tfs_get_work_item` | Ziskanie work itemu s plnymi detailmi vratane komentarov |
 | `tfs_get_comments` | Ziskanie komentarov/historie work itemu |
-| `tfs_search_work_items` | Vyhladavanie work itemov pomocou WIQL dotazov |
+| `tfs_search_work_items` | Vyhladavanie work itemov pomocou WIQL dotazov (podpora `top`/`skip` strankovania) |
 
 **Premenne prostredia:**
 - `TFS_URL` - URL TFS kolekcie (napr. `http://tfs.example.local:8080/tfs/your_collection`)
@@ -58,7 +58,7 @@ MCP server pre Jira Server / Data Center vyuzivajuci REST API v2. Ziadne externe
 **Nastroje:**
 | Nastroj | Popis |
 |---------|-------|
-| `jira_search` | Vyhladavanie issues pomocou JQL |
+| `jira_search` | Vyhladavanie issues pomocou JQL (podpora `startAt`/`maxResults` strankovania) |
 | `jira_get_issue` | Ziskanie plnych detailov issue |
 | `jira_create_issue` | Vytvorenie noveho issue |
 | `jira_update_issue` | Aktualizacia poli issue |
@@ -97,9 +97,9 @@ TypeScript MCP server, ktory cita UML modely priamo z MS SQL databazy Enterprise
 **Nastroje:**
 | Nastroj | Popis |
 |---------|-------|
-| `search_ea_elements` | Vyhladavanie Use Case-ov, Aktivit, Poziadaviek podla nazvu |
+| `search_ea_elements` | Vyhladavanie Use Case-ov, Aktivit, Poziadaviek podla nazvu (podpora `maxResults`/`offset` strankovania) |
 | `get_element_details` | Ziskanie plnej specifikacie s krokmi scenara (XML) |
-| `search_diagrams` | Vyhladavanie diagramov podla nazvu |
+| `search_diagrams` | Vyhladavanie diagramov podla nazvu (podpora `maxResults`/`offset` strankovania) |
 | `get_diagram_as_mermaid` | Generovanie Mermaid.js vizualizacie diagramu |
 | `get_element_relationships` | Ziskanie sledovatelnosti, hierarchie a zavislosti |
 
