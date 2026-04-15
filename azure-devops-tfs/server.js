@@ -324,6 +324,255 @@ async function getPullRequestCommits(pullRequestId) {
 }
 
 /**
+ * Get changed files (diff summary) for a pull request iteration
+ */
+async function getPullRequestDiff(pullRequestId, options = {}) {
+  const { iterationId, top = 200, skip = 0 } = options;
+
+  const pr = await makeRequest(
+    `/${TFS_PROJECT}/_apis/git/pullrequests/${pullRequestId}?api-version=${TFS_API_VERSION}`
+  );
+  if (pr.error) return pr;
+
+  const repositoryId = pr.repository?.id;
+  if (!repositoryId) return { error: 'Could not determine repository ID from pull request' };
+
+  const iterationsResponse = await makeRequest(
+    `/${TFS_PROJECT}/_apis/git/repositories/${repositoryId}/pullRequests/${pullRequestId}/iterations?api-version=${TFS_API_VERSION}`
+  );
+  if (iterationsResponse.error) return iterationsResponse;
+
+  const iterations = iterationsResponse.value || [];
+  if (iterations.length === 0) {
+    return { error: `No iterations found for pull request ${pullRequestId}` };
+  }
+
+  const selectedIterationId = iterationId
+    ? parseInt(iterationId)
+    : Math.max(...iterations.map(it => it.id || 0));
+
+  const changesResponse = await makeRequest(
+    `/${TFS_PROJECT}/_apis/git/repositories/${repositoryId}/pullRequests/${pullRequestId}/iterations/${selectedIterationId}/changes?$top=${top}&$skip=${skip}&api-version=${TFS_API_VERSION}`
+  );
+  if (changesResponse.error) return changesResponse;
+
+  const changes = (changesResponse.changeEntries || changesResponse.value || []).map(change => ({
+    changeTrackingId: change.changeTrackingId,
+    changeId: change.changeId,
+    changeType: change.changeType || '',
+    item: {
+      path: change.item?.path || '',
+      gitObjectType: change.item?.gitObjectType || '',
+      objectId: change.item?.objectId || '',
+      url: change.item?.url || ''
+    },
+    originalPath: change.originalPath || null
+  }));
+
+  return {
+    pullRequestId,
+    repository: pr.repository?.name || '',
+    repositoryId,
+    iterationId: selectedIterationId,
+    count: changes.length,
+    totalCount: changesResponse.count ?? changes.length,
+    skip,
+    top,
+    hasMore: typeof changesResponse.count === 'number'
+      ? (skip + changes.length) < changesResponse.count
+      : changes.length === top,
+    sourceRefName: pr.sourceRefName || '',
+    targetRefName: pr.targetRefName || '',
+    iterations: iterations.map(it => ({
+      id: it.id,
+      description: it.description || '',
+      createdDate: it.createdDate || '',
+      updatedDate: it.updatedDate || '',
+      author: it.author?.displayName || ''
+    })),
+    changes
+  };
+}
+
+async function getGitItemContent(repositoryId, path, commitId) {
+  const encodedPath = encodeURIComponent(path);
+  const encodedCommitId = encodeURIComponent(commitId);
+  const response = await makeRequest(
+    `/${TFS_PROJECT}/_apis/git/repositories/${repositoryId}/items?path=${encodedPath}&versionDescriptor.versionType=commit&versionDescriptor.version=${encodedCommitId}&includeContent=true&api-version=${TFS_API_VERSION}`
+  );
+
+  if (response.error) {
+    return null;
+  }
+
+  return typeof response.content === 'string' ? response.content : '';
+}
+
+function splitLines(text) {
+  if (!text) return [];
+  return text.replace(/\r\n/g, '\n').split('\n');
+}
+
+function buildLcsTable(a, b) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const table = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      if (a[i] === b[j]) {
+        table[i][j] = table[i + 1][j + 1] + 1;
+      } else {
+        table[i][j] = Math.max(table[i + 1][j], table[i][j + 1]);
+      }
+    }
+  }
+
+  return table;
+}
+
+function buildDiffOps(oldLines, newLines) {
+  const table = buildLcsTable(oldLines, newLines);
+  const ops = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < oldLines.length && j < newLines.length) {
+    if (oldLines[i] === newLines[j]) {
+      ops.push({ type: 'context', line: oldLines[i] });
+      i++;
+      j++;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      ops.push({ type: 'delete', line: oldLines[i] });
+      i++;
+    } else {
+      ops.push({ type: 'add', line: newLines[j] });
+      j++;
+    }
+  }
+
+  while (i < oldLines.length) {
+    ops.push({ type: 'delete', line: oldLines[i] });
+    i++;
+  }
+
+  while (j < newLines.length) {
+    ops.push({ type: 'add', line: newLines[j] });
+    j++;
+  }
+
+  return ops;
+}
+
+function buildUnifiedPatch(oldPath, newPath, oldText, newText) {
+  const oldLines = splitLines(oldText);
+  const newLines = splitLines(newText);
+  const ops = buildDiffOps(oldLines, newLines);
+
+  const oldCount = oldLines.length;
+  const newCount = newLines.length;
+
+  const patchLines = [
+    `--- a${oldPath}`,
+    `+++ b${newPath}`,
+    `@@ -1,${oldCount} +1,${newCount} @@`
+  ];
+
+  for (const op of ops) {
+    if (op.type === 'context') patchLines.push(` ${op.line}`);
+    if (op.type === 'delete') patchLines.push(`-${op.line}`);
+    if (op.type === 'add') patchLines.push(`+${op.line}`);
+  }
+
+  return patchLines.join('\n');
+}
+
+/**
+ * Get per-file unified patches for a pull request
+ */
+async function getPullRequestPatch(pullRequestId, options = {}) {
+  const { iterationId, top = 50, skip = 0, maxFileLines = 400, maxFiles = 50 } = options;
+
+  const pr = await makeRequest(
+    `/${TFS_PROJECT}/_apis/git/pullrequests/${pullRequestId}?api-version=${TFS_API_VERSION}`
+  );
+  if (pr.error) return pr;
+
+  const sourceCommitId = pr.lastMergeSourceCommit?.commitId || pr.lastMergeCommit?.commitId;
+  const targetCommitId = pr.lastMergeTargetCommit?.commitId || pr.lastMergeBaseCommit?.commitId;
+  if (!sourceCommitId || !targetCommitId) {
+    return { error: 'Could not determine source/target commit IDs for pull request' };
+  }
+
+  const diffSummary = await getPullRequestDiff(pullRequestId, { iterationId, top, skip });
+  if (diffSummary.error) return diffSummary;
+
+  const fileChanges = (diffSummary.changes || []).slice(0, Math.max(1, Math.min(maxFiles, top)));
+  const patches = [];
+
+  for (const change of fileChanges) {
+    const newPath = change.item?.path || '';
+    const oldPath = change.originalPath || newPath;
+    const changeType = (change.changeType || '').toLowerCase();
+
+    let oldContent = '';
+    let newContent = '';
+
+    if (changeType.includes('add')) {
+      newContent = await getGitItemContent(diffSummary.repositoryId, newPath, sourceCommitId) || '';
+    } else if (changeType.includes('delete')) {
+      oldContent = await getGitItemContent(diffSummary.repositoryId, oldPath, targetCommitId) || '';
+    } else {
+      oldContent = await getGitItemContent(diffSummary.repositoryId, oldPath, targetCommitId) || '';
+      newContent = await getGitItemContent(diffSummary.repositoryId, newPath, sourceCommitId) || '';
+    }
+
+    const oldLineCount = splitLines(oldContent).length;
+    const newLineCount = splitLines(newContent).length;
+
+    if (oldLineCount > maxFileLines || newLineCount > maxFileLines) {
+      patches.push({
+        path: newPath,
+        originalPath: change.originalPath || null,
+        changeType: change.changeType || '',
+        skipped: true,
+        reason: `File exceeds maxFileLines limit (${maxFileLines})`,
+        oldLineCount,
+        newLineCount
+      });
+      continue;
+    }
+
+    patches.push({
+      path: newPath,
+      originalPath: change.originalPath || null,
+      changeType: change.changeType || '',
+      skipped: false,
+      oldLineCount,
+      newLineCount,
+      patch: buildUnifiedPatch(oldPath, newPath, oldContent, newContent)
+    });
+  }
+
+  return {
+    pullRequestId,
+    repository: diffSummary.repository,
+    repositoryId: diffSummary.repositoryId,
+    iterationId: diffSummary.iterationId,
+    sourceCommitId,
+    targetCommitId,
+    skip,
+    top,
+    maxFiles: Math.max(1, Math.min(maxFiles, top)),
+    maxFileLines,
+    totalFilesInIteration: diffSummary.totalCount,
+    returnedFiles: patches.length,
+    hasMore: diffSummary.hasMore || (diffSummary.count > fileChanges.length),
+    patches
+  };
+}
+
+/**
  * Get pull requests linked to a work item
  */
 async function getWorkItemPullRequests(workItemId, top = 50, skip = 0) {
@@ -548,6 +797,66 @@ async function handleRequest(request) {
               }
             },
             {
+              name: 'tfs_get_pull_request_diff',
+              description: 'Get changed files (diff summary) for a pull request iteration',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  pullRequestId: {
+                    type: 'integer',
+                    description: 'Pull request ID'
+                  },
+                  iterationId: {
+                    type: 'integer',
+                    description: 'Optional pull request iteration ID. If omitted, latest iteration is used.'
+                  },
+                  top: {
+                    type: 'integer',
+                    description: 'Max number of changed files to return (default 200). Use with skip for pagination.'
+                  },
+                  skip: {
+                    type: 'integer',
+                    description: 'Number of changed files to skip (default 0). Use with top for pagination.'
+                  }
+                },
+                required: ['pullRequestId']
+              }
+            },
+            {
+              name: 'tfs_get_pull_request_patch',
+              description: 'Get per-file unified patch text for a pull request (with limits for large files)',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  pullRequestId: {
+                    type: 'integer',
+                    description: 'Pull request ID'
+                  },
+                  iterationId: {
+                    type: 'integer',
+                    description: 'Optional pull request iteration ID. If omitted, latest iteration is used.'
+                  },
+                  top: {
+                    type: 'integer',
+                    description: 'Max number of changed files to inspect (default 50). Use with skip for pagination.'
+                  },
+                  skip: {
+                    type: 'integer',
+                    description: 'Number of changed files to skip (default 0). Use with top for pagination.'
+                  },
+                  maxFileLines: {
+                    type: 'integer',
+                    description: 'Skip patch generation for files above this line count (default 400).'
+                  },
+                  maxFiles: {
+                    type: 'integer',
+                    description: 'Hard cap for generated patches (default 50).'
+                  }
+                },
+                required: ['pullRequestId']
+              }
+            },
+            {
               name: 'tfs_get_work_item_pull_requests',
               description: 'Get pull requests linked to a specific work item (ticket)',
               inputSchema: {
@@ -645,6 +954,32 @@ async function handleRequest(request) {
             result = { error: 'Missing required parameter: pullRequestId' };
           } else {
             result = await getPullRequestCommits(parseInt(toolArgs.pullRequestId));
+          }
+          break;
+
+        case 'tfs_get_pull_request_diff':
+          if (!toolArgs.pullRequestId) {
+            result = { error: 'Missing required parameter: pullRequestId' };
+          } else {
+            result = await getPullRequestDiff(parseInt(toolArgs.pullRequestId), {
+              iterationId: toolArgs.iterationId,
+              top: toolArgs.top,
+              skip: toolArgs.skip
+            });
+          }
+          break;
+
+        case 'tfs_get_pull_request_patch':
+          if (!toolArgs.pullRequestId) {
+            result = { error: 'Missing required parameter: pullRequestId' };
+          } else {
+            result = await getPullRequestPatch(parseInt(toolArgs.pullRequestId), {
+              iterationId: toolArgs.iterationId,
+              top: toolArgs.top,
+              skip: toolArgs.skip,
+              maxFileLines: toolArgs.maxFileLines,
+              maxFiles: toolArgs.maxFiles
+            });
           }
           break;
 
