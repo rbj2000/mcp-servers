@@ -167,6 +167,18 @@ async function jiraLinkIssues(inwardIssueKey, outwardIssueKey, linkType) {
   });
 }
 
+async function jiraAddRemoteLink(issueIdOrKey, url, title, summary = null, relationship = null, globalId = null, icon = null) {
+  const object = { url, title };
+  if (summary) object.summary = summary;
+  if (icon) object.icon = icon;
+
+  const body = { object };
+  if (relationship) body.relationship = relationship;
+  if (globalId) body.globalId = globalId;
+
+  return await makeRequest(`/rest/api/2/issue/${issueIdOrKey}/remotelink`, 'POST', body);
+}
+
 async function jiraAddWorklog(issueIdOrKey, timeSpent, comment = '', started = null) {
   const body = {
     timeSpent,
@@ -336,6 +348,23 @@ async function handleRequest(request) {
               }
             },
             {
+              name: 'jira_add_remote_link',
+              description: 'Add a remote (web) link to a Jira issue (e.g. link to external URL, Confluence page, another system)',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  issueIdOrKey: { type: 'string', description: 'Issue Key or ID' },
+                  url: { type: 'string', description: 'Target URL of the remote link' },
+                  title: { type: 'string', description: 'Title of the link displayed in Jira' },
+                  summary: { type: 'string', description: 'Optional summary/description shown under the title' },
+                  relationship: { type: 'string', description: 'Optional relationship text (e.g. "causes", "relates to")' },
+                  globalId: { type: 'string', description: 'Optional unique global ID for idempotent updates' },
+                  icon: { type: 'object', description: 'Optional icon object { url16x16, title }' }
+                },
+                required: ['issueIdOrKey', 'url', 'title']
+              }
+            },
+            {
               name: 'jira_add_worklog',
               description: 'Log time on an issue',
               inputSchema: {
@@ -393,6 +422,9 @@ async function handleRequest(request) {
           break;
         case 'jira_link_issues':
           result = await jiraLinkIssues(args.inwardIssueKey, args.outwardIssueKey, args.linkType);
+          break;
+        case 'jira_add_remote_link':
+          result = await jiraAddRemoteLink(args.issueIdOrKey, args.url, args.title, args.summary, args.relationship, args.globalId, args.icon);
           break;
         case 'jira_add_worklog':
           result = await jiraAddWorklog(args.issueIdOrKey, args.timeSpent, args.comment, args.started);
