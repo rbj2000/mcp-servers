@@ -27,6 +27,35 @@ The server reads credentials and region from environment variables:
 
 **Recommendation:** prefer temporary credentials (`AWS_SESSION_TOKEN`) over long-lived access keys. IAM principal should have only the actions you need — for read-only inspection start with `ec2:Describe*` and `bedrock:List*` / `bedrock:GetFoundationModel`.
 
+### Authenticating via AWS SSO (IAM Identity Center)
+
+For environments using AWS IAM Identity Center (e.g. the Nexonera SSO portal at `https://nexonera.awsapps.com/start/#/`), do not generate long-lived access keys. Issue short-lived credentials per session through the AWS CLI instead:
+
+1. Install AWS CLI v2 and run `aws configure sso`. Use the SSO start URL `https://nexonera.awsapps.com/start/#/`, pick the Identity Center region (typically `eu-central-1`), choose the AWS account + role in the browser flow, and assign a profile name (e.g. `nexonera`).
+2. Refresh the SSO session each day with `aws sso login --profile nexonera` (sessions typically last 8–12 hours).
+3. Launch the MCP server through a wrapper that exports credentials at start-up — this server reads env vars, not `~/.aws/credentials`:
+
+```json
+{
+  "command": "sh",
+  "args": [
+    "-c",
+    "eval \"$(aws configure export-credentials --profile nexonera --format env-no-export)\" && exec node /absolute/path/to/aws/server.js"
+  ],
+  "env": { "AWS_REGION": "eu-central-1" }
+}
+```
+
+The wrapper resolves fresh `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` on every server start. If the SSO session expires, calls start failing with `HTTP 403 ExpiredToken` — surface that to the user and ask them to run `aws sso login --profile nexonera` and restart the MCP server.
+
+**Diagnosing SSO errors:**
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `HTTP 403 ExpiredToken` / `The provided token has expired` | `aws sso login` session lapsed | Run `aws sso login --profile <name>` and restart the server |
+| `HTTP 400 InvalidClientTokenId` | Wrong / stale `AWS_ACCESS_KEY_ID`, or env vars overriding the wrapper | Confirm the wrapper is actually running; check Claude Desktop's env block does not pin old keys |
+| `HTTP 403 AccessDenied` for a specific action | SSO role missing the IAM permission | Switch to a role that has it, or ask an admin to extend the permission set |
+
 ## Region Handling
 
 - The configured `AWS_REGION` is used by default for every call.

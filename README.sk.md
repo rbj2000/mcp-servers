@@ -153,6 +153,67 @@ Lahky Node.js MCP server pre AWS bez externych zavislosti. **AWS Signature V4** 
 - `AWS_SESSION_TOKEN` - (Volitelne) Docasny session token (SSO / STS)
 - `AWS_REGION` - Predvoleny region (predvolene: `us-east-1`)
 
+#### Autentifikacia cez AWS SSO (IAM Identity Center)
+
+Pre organizacie pouzivajuce AWS IAM Identity Center (napr. Microsoft / Nexonera SSO) **nepouzivajte** dlhodobe access keys — vydavajte docasne kredencie pre kazdu seansu.
+
+**1. Jednorazove nastavenie AWS CLI v2** ([instalacny navod](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)):
+
+```bash
+aws configure sso
+```
+
+Odpovedzte na vyzvy:
+
+| Vyzva | Hodnota |
+|-------|---------|
+| SSO start URL | `https://nexonera.awsapps.com/start/#/` |
+| SSO region | region kde bezi Identity Center (typicky `eu-central-1`) |
+| CLI default client region | region s ktorym najcastejsie pracujete (napr. `eu-central-1`) |
+| CLI default output format | `json` |
+| Profile name | napr. `nexonera` |
+
+Otvori sa prehliadac — prihlaste sa Microsoft / Nexonera uctom, schvalte zariadenie a vyberte AWS ucet + rolu.
+
+**2. Denne prihlasenie** (obnovi SSO seansu, typicky 8–12 hodin):
+
+```bash
+aws sso login --profile nexonera
+```
+
+**3. Prepojenie SSO kredencii s MCP serverom.** Server cita premenne prostredia, nie `~/.aws/credentials`. Dve moznosti:
+
+*Moznost A — wrapper exportujuci kredencie (odporucane, macOS / Linux):*
+
+```json
+{
+  "mcpServers": {
+    "aws": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "eval \"$(aws configure export-credentials --profile nexonera --format env-no-export)\" && exec node /absolutna/cesta/k/aws/server.js"
+      ],
+      "env": {
+        "AWS_REGION": "eu-central-1"
+      }
+    }
+  }
+}
+```
+
+Pri kazdom starte servera wrapper vytiahne cerstve `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` a `AWS_SESSION_TOKEN` z SSO cache a spusti `node`. Pokial je `aws sso login` stale platny, restart funguje automaticky.
+
+*Moznost B — exportovat raz, vlozit do konfiguracie:*
+
+```bash
+aws configure export-credentials --profile nexonera --format env-no-export
+```
+
+Skopirujte tri vypisane hodnoty do `env` bloku. Treba zopakovat pri kazdom expirovani SSO seansy.
+
+*Windows (PowerShell wrapper):* pouzite `aws configure export-credentials --profile nexonera --format powershell | Invoke-Expression` pred volanim `node`, alebo spustite server cez WSL s moznostou A.
+
 ---
 
 ## Klientske Skilly
