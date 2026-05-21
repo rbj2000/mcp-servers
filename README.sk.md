@@ -2,7 +2,7 @@
 
 [English version](README.md)
 
-Kolekcia vlastnych **Model Context Protocol (MCP)** serverov a klientskych skillov urcena na integraciu s Claude Desktop (a inymi MCP-kompatibilnymi klientmi). Tieto servery poskytuju AI asistentom priamy pristup k podnikovym nastrojom: Azure DevOps / TFS, Jira (On-Premise aj Cloud) a Enterprise Architect.
+Kolekcia vlastnych **Model Context Protocol (MCP)** serverov a klientskych skillov urcena na integraciu s Claude Desktop (a inymi MCP-kompatibilnymi klientmi). Tieto servery poskytuju AI asistentom priamy pristup k podnikovym nastrojom: Azure DevOps / TFS, Jira (On-Premise aj Cloud), Enterprise Architect a AWS (Bedrock + EC2).
 
 ## Struktura repozitara
 
@@ -19,10 +19,13 @@ mcp-servers/
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── README.md
+├── aws/                 # MCP server pre AWS (Bedrock + EC2)
+│   └── server.js
 ├── skills/              # Klientske skilly (AI instrukcie pre MCP servery)
 │   ├── Azure-MCP-client-skill.md
 │   ├── Jira-Mcp-client-skill.md
 │   ├── EA-DB-based-client-skill.md
+│   ├── AWS-MCP-client-skill.md
 │   └── Documentation-Reader-skill.md
 └── docs/                    # Navody a poziadavky
     ├── MCP_SETUP_GUIDE_WINDOWS.md      # Navod na nastavenie pre Windows (EN)
@@ -119,6 +122,39 @@ npm run build
 
 ---
 
+### 5. AWS Server (Bedrock + EC2)
+
+Lahky Node.js MCP server pre AWS bez externych zavislosti. **AWS Signature V4** je implementovany lokalne pomocou vstavaneho modulu `crypto` — netreba AWS SDK. Podporuje docasne kredencie cez `AWS_SESSION_TOKEN`.
+
+**Nastroje — Bedrock:**
+| Nastroj | Popis |
+|---------|-------|
+| `bedrock_list_foundation_models` | Zoznam foundation modelov (filter podla providera, modality, typu inferencie) |
+| `bedrock_get_foundation_model` | Detaily konkretneho modelu |
+| `bedrock_list_inference_profiles` | Zoznam inference profilov (napr. cross-region routing) |
+| `bedrock_invoke_model` | Volanie modelu s provider-specifickym JSON telom |
+| `bedrock_converse` | Provider-agnosticky chat cez Converse API (odporucane) |
+
+**Nastroje — EC2:**
+| Nastroj | Popis |
+|---------|-------|
+| `ec2_describe_instances` | Zoznam EC2 instancii (filtre, strankovanie, region override per volanie) |
+| `ec2_describe_regions` | Zoznam AWS regionov |
+| `ec2_describe_security_groups` | Zoznam security groups |
+| `ec2_describe_vpcs` | Zoznam VPC |
+| `ec2_describe_images` | Zoznam AMI (vzdy pouzite `owners` pre zuzenie vysledku) |
+| `ec2_start_instances` | Spustenie zastavenych instancii |
+| `ec2_stop_instances` | Zastavenie instancii (podporuje `force`) |
+| `ec2_reboot_instances` | Restart instancii |
+
+**Premenne prostredia:**
+- `AWS_ACCESS_KEY_ID` - Access key
+- `AWS_SECRET_ACCESS_KEY` - Secret access key
+- `AWS_SESSION_TOKEN` - (Volitelne) Docasny session token (SSO / STS)
+- `AWS_REGION` - Predvoleny region (predvolene: `us-east-1`)
+
+---
+
 ## Klientske Skilly
 
 Priecinok `skills/` obsahuje `.md` subory skillov, ktore je mozne pridat do Claude Desktop alebo Claude Code ako projektove instrukcie, ktore naucia AI efektivne vyuzivat tieto MCP servery:
@@ -126,6 +162,7 @@ Priecinok `skills/` obsahuje `.md` subory skillov, ktore je mozne pridat do Clau
 - **skills/Azure-MCP-client-skill.md** - Navod pre pracu s Azure DevOps/TFS work itemami a WIQL dotazmi
 - **skills/Jira-Mcp-client-skill.md** - Komplexny navod pre Jira integracne workflow (vyhladavanie, vytvavanie, prepajanie, testovacie scenare)
 - **skills/EA-DB-based-client-skill.md** - Navod pre navigaciu EA modelom, extrahovanie specifikacii a vizualizaciu diagramov
+- **skills/AWS-MCP-client-skill.md** - Navod pre Bedrock invokacie (Converse API) a inspekciu / lifecycle EC2 flotily
 - **skills/Documentation-Reader-skill.md** - Metodologia pre analyzu pouzivatelskych navodov a prepisov nahravok na extrahovanie strukturovanych testovacich scenarov
 
 ## Rychly start
@@ -173,6 +210,15 @@ Priklad konfiguracie so vsetkymi servermi:
         "DB_USER": "vas-pouzivatel",
         "DB_PASSWORD": "VASE_HESLO"
       }
+    },
+    "aws": {
+      "command": "node",
+      "args": ["<cesta-k>/aws/server.js"],
+      "env": {
+        "AWS_ACCESS_KEY_ID": "VAS_ACCESS_KEY",
+        "AWS_SECRET_ACCESS_KEY": "VAS_SECRET_KEY",
+        "AWS_REGION": "eu-central-1"
+      }
     }
   }
 }
@@ -185,6 +231,7 @@ Po restartovani Claude Desktop otestujte kazdy server:
 - **TFS:** "Zobraz moje work items v TFS"
 - **Jira:** "Zobraz moje priradene Jira tickety"
 - **EA:** "Najdi v EA use case pre prihlasenie"
+- **AWS:** "Vypis moje EC2 instancie v eu-central-1" alebo "Zobraz Bedrock modely od Anthropicu"
 
 ## Licencia
 

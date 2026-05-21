@@ -2,7 +2,7 @@
 
 [Slovensky / Slovak version](README.sk.md)
 
-A collection of custom **Model Context Protocol (MCP)** servers and client skills designed for integration with Claude Desktop (and other MCP-compatible clients). These servers provide AI assistants with direct access to enterprise tools: Azure DevOps / TFS, Jira (On-Premise & Cloud), and Enterprise Architect.
+A collection of custom **Model Context Protocol (MCP)** servers and client skills designed for integration with Claude Desktop (and other MCP-compatible clients). These servers provide AI assistants with direct access to enterprise tools: Azure DevOps / TFS, Jira (On-Premise & Cloud), Enterprise Architect, and AWS (Bedrock + EC2).
 
 ## Repository Structure
 
@@ -19,10 +19,13 @@ mcp-servers/
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── README.md
+├── aws/                 # MCP server for AWS (Bedrock + EC2)
+│   └── server.js
 ├── skills/              # Client skills (AI instructions for MCP servers)
 │   ├── Azure-MCP-client-skill.md
 │   ├── Jira-Mcp-client-skill.md
 │   ├── EA-DB-based-client-skill.md
+│   ├── AWS-MCP-client-skill.md
 │   └── Documentation-Reader-skill.md
 └── docs/                    # Guides and requirements
     ├── MCP_SETUP_GUIDE_WINDOWS.md      # Windows setup guide (EN)
@@ -119,6 +122,39 @@ npm run build
 
 ---
 
+### 5. AWS Server (Bedrock + EC2)
+
+Zero-dependency Node.js MCP server for AWS. Implements **AWS Signature V4** locally using the built-in `crypto` module — no AWS SDK required. Supports temporary credentials via `AWS_SESSION_TOKEN`.
+
+**Tools — Bedrock:**
+| Tool | Description |
+|------|-------------|
+| `bedrock_list_foundation_models` | List foundation models (filter by provider, modality, inference type) |
+| `bedrock_get_foundation_model` | Get details for a single model |
+| `bedrock_list_inference_profiles` | List inference profiles (e.g. cross-region routing) |
+| `bedrock_invoke_model` | Invoke a model with a provider-specific JSON body |
+| `bedrock_converse` | Provider-agnostic chat via the Converse API (recommended) |
+
+**Tools — EC2:**
+| Tool | Description |
+|------|-------------|
+| `ec2_describe_instances` | List EC2 instances (filters, pagination, per-call region override) |
+| `ec2_describe_regions` | List AWS regions |
+| `ec2_describe_security_groups` | List security groups |
+| `ec2_describe_vpcs` | List VPCs |
+| `ec2_describe_images` | List AMIs (always pass `owners` to scope the result) |
+| `ec2_start_instances` | Start one or more stopped instances |
+| `ec2_stop_instances` | Stop one or more instances (supports `force`) |
+| `ec2_reboot_instances` | Reboot one or more instances |
+
+**Environment variables:**
+- `AWS_ACCESS_KEY_ID` - Access key
+- `AWS_SECRET_ACCESS_KEY` - Secret access key
+- `AWS_SESSION_TOKEN` - (Optional) Temporary session token (SSO / STS)
+- `AWS_REGION` - Default region (default: `us-east-1`)
+
+---
+
 ## Client Skills
 
 The `skills/` folder contains `.md` skill files that can be added to Claude Desktop or Claude Code as project instructions to teach the AI how to effectively use these MCP servers:
@@ -126,6 +162,7 @@ The `skills/` folder contains `.md` skill files that can be added to Claude Desk
 - **skills/Azure-MCP-client-skill.md** - Guide for Azure DevOps/TFS work item management and WIQL queries
 - **skills/Jira-Mcp-client-skill.md** - Comprehensive guide for Jira integration workflows (search, create, link, test scenarios)
 - **skills/EA-DB-based-client-skill.md** - Guide for EA model navigation, specification extraction, and diagram visualization
+- **skills/AWS-MCP-client-skill.md** - Guide for Bedrock invocation (Converse API) and EC2 fleet inspection / lifecycle operations
 - **skills/Documentation-Reader-skill.md** - Methodology for analyzing user guides and transcribed recordings to extract structured test scenarios
 
 ## Quick Start
@@ -173,6 +210,15 @@ Example configuration with all servers:
         "DB_USER": "your-user",
         "DB_PASSWORD": "YOUR_PASSWORD"
       }
+    },
+    "aws": {
+      "command": "node",
+      "args": ["<path-to>/aws/server.js"],
+      "env": {
+        "AWS_ACCESS_KEY_ID": "YOUR_ACCESS_KEY",
+        "AWS_SECRET_ACCESS_KEY": "YOUR_SECRET_KEY",
+        "AWS_REGION": "eu-central-1"
+      }
     }
   }
 }
@@ -185,6 +231,7 @@ After restarting Claude Desktop, test each server:
 - **TFS:** "Show my work items in TFS"
 - **Jira:** "Show my assigned Jira tickets"
 - **EA:** "Search for login use case in EA"
+- **AWS:** "List my EC2 instances in eu-central-1" or "List Bedrock foundation models from Anthropic"
 
 ## Security Notes
 
@@ -193,6 +240,7 @@ These MCP servers are designed to run locally (STDIO). However, they connect to 
 1.  **Token Scope**: Generate Personal Access Tokens (PATs) with the *minimum required privileges*.
     -   **Azure DevOps**: `Work Items (Read & Write)`, `Code (Read)`, `Build (Read)`.
     -   **Jira**: Use `Read` permissions unless you need to create/update issues.
+    -   **AWS**: Create an IAM user/role with only the actions you need (e.g. `ec2:Describe*`, `bedrock:InvokeModel`, `bedrock:ListFoundationModels`). Avoid wildcards. Prefer temporary credentials via `AWS_SESSION_TOKEN` (SSO/STS) over long-lived access keys.
 2.  **HTTPS**: Always use HTTPS for TFS and Jira connections (`https://tfs.example.com`). Avoid HTTP (`http://`) to prevent credential leakage.
 3.  **Database Security**:
     -   Use a read-only database user for the EA MCP server if possible (`db_datareader`).
