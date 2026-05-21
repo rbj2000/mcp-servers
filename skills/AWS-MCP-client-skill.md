@@ -29,10 +29,10 @@ The server reads credentials and region from environment variables:
 
 ### Authenticating via AWS SSO (IAM Identity Center)
 
-For environments using AWS IAM Identity Center (e.g. the Nexonera SSO portal at `https://nexonera.awsapps.com/start/#/`), do not generate long-lived access keys. Issue short-lived credentials per session through the AWS CLI instead:
+For environments using AWS IAM Identity Center federated with Microsoft Entra ID (Azure AD), do not generate long-lived access keys. Issue short-lived credentials per session through the AWS CLI instead. The same flow works for any Identity Center setup — only the start URL and IdP differ.
 
-1. Install AWS CLI v2 and run `aws configure sso`. Use the SSO start URL `https://nexonera.awsapps.com/start/#/`, pick the Identity Center region (typically `eu-central-1`), choose the AWS account + role in the browser flow, and assign a profile name (e.g. `nexonera`).
-2. Refresh the SSO session each day with `aws sso login --profile nexonera` (sessions typically last 8–12 hours).
+1. Install AWS CLI v2 and run `aws configure sso`. Use your org's Identity Center start URL (`https://<your-org>.awsapps.com/start/#/`), pick the Identity Center region, sign in via the Microsoft Entra ID browser flow, choose the AWS account + role, and assign any profile name (e.g. `my-sso`).
+2. Refresh the SSO session each day with `aws sso login --profile my-sso` (sessions typically last 8–12 hours).
 3. Launch the MCP server through a wrapper that exports credentials at start-up — this server reads env vars, not `~/.aws/credentials`:
 
 ```json
@@ -40,13 +40,13 @@ For environments using AWS IAM Identity Center (e.g. the Nexonera SSO portal at 
   "command": "sh",
   "args": [
     "-c",
-    "eval \"$(aws configure export-credentials --profile nexonera --format env-no-export)\" && exec node /absolute/path/to/aws/server.js"
+    "eval \"$(aws configure export-credentials --profile my-sso --format env-no-export)\" && exec node /absolute/path/to/aws/server.js"
   ],
   "env": { "AWS_REGION": "eu-central-1" }
 }
 ```
 
-The wrapper resolves fresh `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` on every server start. If the SSO session expires, calls start failing with `HTTP 403 ExpiredToken` — surface that to the user and ask them to run `aws sso login --profile nexonera` and restart the MCP server.
+The wrapper resolves fresh `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` on every server start. If the SSO session expires, calls start failing with `HTTP 403 ExpiredToken` — surface that to the user and ask them to run `aws sso login --profile <their-profile>` and restart the MCP server.
 
 **Diagnosing SSO errors:**
 

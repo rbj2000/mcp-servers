@@ -155,7 +155,7 @@ Zero-dependency Node.js MCP server for AWS. Implements **AWS Signature V4** loca
 
 #### Authentication via AWS SSO (IAM Identity Center)
 
-For organizations using AWS IAM Identity Center (e.g. Microsoft / Nexonera SSO), do **not** use long-lived access keys — issue temporary credentials per session instead.
+For organizations using AWS IAM Identity Center federated with Microsoft Entra ID (Azure AD), do **not** use long-lived access keys — issue temporary credentials per session instead. The same flow works for any Identity Center setup; only the start URL and IdP differ.
 
 **1. One-time AWS CLI v2 setup** ([install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)):
 
@@ -167,18 +167,18 @@ Answer the prompts:
 
 | Prompt | Value |
 |--------|-------|
-| SSO start URL | `https://nexonera.awsapps.com/start/#/` |
-| SSO region | region hosting Identity Center (typically `eu-central-1`) |
-| CLI default client region | the region you mostly work in (e.g. `eu-central-1`) |
+| SSO start URL | `https://<your-org>.awsapps.com/start/#/` (your Identity Center portal URL) |
+| SSO region | region hosting Identity Center (e.g. `eu-central-1`) |
+| CLI default client region | the region you mostly work in |
 | CLI default output format | `json` |
-| Profile name | e.g. `nexonera` |
+| Profile name | any name you like, e.g. `my-sso` |
 
-A browser opens — sign in with your Microsoft / Nexonera account, approve the device, then pick the AWS account + role.
+A browser opens — sign in with your Microsoft Entra ID / Azure AD account, approve the device, then pick the AWS account + role.
 
 **2. Daily login** (refresh the SSO session, typically 8–12 hours):
 
 ```bash
-aws sso login --profile nexonera
+aws sso login --profile my-sso
 ```
 
 **3. Wire SSO credentials into the MCP server.** The server reads env vars, not `~/.aws/credentials`. Two options:
@@ -192,7 +192,7 @@ aws sso login --profile nexonera
       "command": "sh",
       "args": [
         "-c",
-        "eval \"$(aws configure export-credentials --profile nexonera --format env-no-export)\" && exec node /absolute/path/to/aws/server.js"
+        "eval \"$(aws configure export-credentials --profile my-sso --format env-no-export)\" && exec node /absolute/path/to/aws/server.js"
       ],
       "env": {
         "AWS_REGION": "eu-central-1"
@@ -207,12 +207,12 @@ Each time Claude Desktop launches the server, the wrapper pulls fresh `AWS_ACCES
 *Option B — export once, paste into config:*
 
 ```bash
-aws configure export-credentials --profile nexonera --format env-no-export
+aws configure export-credentials --profile my-sso --format env-no-export
 ```
 
 Copy the three printed values into the `env` block. Repeat whenever the SSO session expires.
 
-*Windows (PowerShell wrapper):* use `aws configure export-credentials --profile nexonera --format powershell | Invoke-Expression` ahead of the `node` call, or run the server from WSL with Option A.
+*Windows (PowerShell wrapper):* use `aws configure export-credentials --profile my-sso --format powershell | Invoke-Expression` ahead of the `node` call, or run the server from WSL with Option A.
 
 ---
 
