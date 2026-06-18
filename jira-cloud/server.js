@@ -112,38 +112,147 @@ function makeRequest(path, method = 'GET', body = null) {
 }
 
 /**
- * Convert plain text to Atlassian Document Format (ADF)
+ * Parse inline markdown (bold, italic, inline code, links) into ADF text nodes.
+ */
+function parseInline(text) {
+  const nodes = [];
+  // Order matters: inline code first (so its contents aren't re-parsed), then bold, italic, links.
+  const regex = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(_[^_]+_)|(\[[^\]]+\]\([^)]+\))/g;
+  let last = 0;
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) {
+      nodes.push({ type: 'text', text: text.slice(last, m.index) });
+    }
+    const tok = m[0];
+    if (tok.startsWith('`')) {
+      nodes.push({ type: 'text', text: tok.slice(1, -1), marks: [{ type: 'code' }] });
+    } else if (tok.startsWith('**')) {
+      nodes.push({ type: 'text', text: tok.slice(2, -2), marks: [{ type: 'strong' }] });
+    } else if (tok.startsWith('*') || tok.startsWith('_')) {
+      nodes.push({ type: 'text', text: tok.slice(1, -1), marks: [{ type: 'em' }] });
+    } else if (tok.startsWith('[')) {
+      const lm = tok.match(/\[([^\]]+)\]\(([^)]+)\)/);
+      nodes.push({ type: 'text', text: lm[1], marks: [{ type: 'link', attrs: { href: lm[2] } }] });
+    }
+    last = regex.lastIndex;
+  }
+  if (last < text.length) {
+    nodes.push({ type: 'text', text: text.slice(last) });
+  }
+  // ADF text nodes must be non-empty.
+  const cleaned = nodes.filter(n => n.text !== '');
+  return cleaned.length ? cleaned : [{ type: 'text', text: ' ' }];
+}
+
+/**
+ * Convert a markdown string to Atlassian Document Format (ADF).
+ * Supports: headings, bold/italic/inline-code, bullet & ordered lists,
+ * fenced code blocks, links, and line breaks within paragraphs.
+ * Non-string input is returned unchanged (already-built ADF passes through).
  */
 function toADF(text) {
   if (typeof text !== 'string') return text;
-  return {
-    type: "doc",
-    version: 1,
-    content: [
-      {
-        type: "paragraph",
-        content: [
-          {
-            type: "text",
-            text: text
-          }
-        ]
+
+  const lines = text.split('\n');
+  const content = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block
+    if (/^```/.test(line.trim())) {
+      const lang = line.trim().slice(3).trim();
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      i++; // skip closing fence
+      content.push({
+        type: 'codeBlock',
+        attrs: lang ? { language: lang } : {},
+        content: [{ type: 'text', text: buf.join('\n') || ' ' }]
+      });
+      continue;
+    }
+
+    // Blank line
+    if (line.trim() === '') { i++; continue; }
+
+    // Heading
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      content.push({ type: 'heading', attrs: { level: h[1].length }, content: parseInline(h[2]) });
+      i++;
+      continue;
+    }
+
+    // Bullet list
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        const itemText = lines[i].replace(/^\s*[-*]\s+/, '');
+        items.push({ type: 'listItem', content: [{ type: 'paragraph', content: parseInline(itemText) }] });
+        i++;
       }
-    ]
-  };
+      content.push({ type: 'bulletList', content: items });
+      continue;
+    }
+
+    // Ordered list
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        const itemText = lines[i].replace(/^\s*\d+\.\s+/, '');
+        items.push({ type: 'listItem', content: [{ type: 'paragraph', content: parseInline(itemText) }] });
+        i++;
+      }
+      content.push({ type: 'orderedList', content: items });
+      continue;
+    }
+
+    // Paragraph: gather consecutive plain lines, preserving line breaks
+    const para = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== '' &&
+      !/^\s*[-*]\s+/.test(lines[i]) &&
+      !/^\s*\d+\.\s+/.test(lines[i]) &&
+      !/^#{1,6}\s+/.test(lines[i]) &&
+      !/^```/.test(lines[i].trim())
+    ) {
+      para.push(lines[i]);
+      i++;
+    }
+    const pcontent = [];
+    para.forEach((pl, idx) => {
+      if (idx > 0) pcontent.push({ type: 'hardBreak' });
+      pcontent.push(...parseInline(pl));
+    });
+    content.push({ type: 'paragraph', content: pcontent });
+  }
+
+  if (content.length === 0) {
+    content.push({ type: 'paragraph', content: [{ type: 'text', text: ' ' }] });
+  }
+  return { type: 'doc', version: 1, content };
 }
 
 // --- JIRA Tools Implementation ---
 
-async function jiraSearch(jql, maxResults = 50, startAt = 0) {
-  // Jira Cloud V3 requires POST to /rest/api/3/search/jql for JQL searches
-  // NOTE: The endpoint is /rest/api/3/search/jql, and the body contains the JQL.
-  return await makeRequest('/rest/api/3/search/jql', 'POST', {
+async function jiraSearch(jql, maxResults = 50, nextPageToken = null) {
+  // Jira Cloud V3 requires POST to /rest/api/3/search/jql for JQL searches.
+  // NOTE: This endpoint uses token-based pagination (nextPageToken), NOT startAt.
+  // Sending startAt results in HTTP 400 "Invalid request payload".
+  const body = {
     jql,
     maxResults,
-    startAt,
     fields: ['summary', 'status', 'assignee', 'priority', 'issuetype', 'created', 'updated', 'project']
-  });
+  };
+  if (nextPageToken) {
+    body.nextPageToken = nextPageToken;
+  }
+  return await makeRequest('/rest/api/3/search/jql', 'POST', body);
 }
 
 async function jiraGetIssue(issueIdOrKey) {
@@ -305,7 +414,7 @@ async function handleRequest(request) {
                 properties: {
                   jql: { type: 'string', description: 'JQL query string' },
                   maxResults: { type: 'integer', description: 'Max results to return (default 50)' },
-                  startAt: { type: 'integer', description: 'Index of the first result to return (0-based, default 0). Use with maxResults for pagination.' }
+                  nextPageToken: { type: 'string', description: 'Pagination token from a previous response (nextPageToken) to fetch the next page.' }
                 },
                 required: ['jql']
               }
@@ -438,7 +547,7 @@ async function handleRequest(request) {
           result = await jiraGetProjectIssueTypes(args.projectIdOrKey);
           break;
         case 'jira_search':
-          result = await jiraSearch(args.jql, args.maxResults, args.startAt);
+          result = await jiraSearch(args.jql, args.maxResults, args.nextPageToken);
           break;
         case 'jira_get_issue':
           result = await jiraGetIssue(args.issueIdOrKey);
